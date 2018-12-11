@@ -1,147 +1,293 @@
 import os
 import datetime
 import json
+import random
 import numpy
 import pandas
 import pprint
 from geopy import distance
-from sklearn.preprocessing import Imputer, LabelEncoder, OneHotEncoder, StandardScaler
+from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
+from sklearn.svm import SVC
+from sklearn.metrics import confusion_matrix
+from sklearn.neighbors import KDTree
+from location_category import get_location_category_type
 
 DIR_PATH = 'data'
-CRIME_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), DIR_PATH, 'Crimes2016.csv')
+CRIME_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), DIR_PATH, 'Crimes2015.csv')
 LOCATION_CATEGORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), DIR_PATH, 'locCategory.csv')
 WEATHER_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), DIR_PATH, 'Weather.csv')
 QUESTION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), DIR_PATH, 'questionNode_2017.csv')
 CATEGORY_TYPE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), DIR_PATH, 'category.json')
 
-FEATURE_SIZE = 6
-RADIUS = 10
+FEATURE_SIZE = 21
+RADIUS = 0.1
+START_TIME = datetime.datetime(year=2016, month=1, day=1, hour=1)
+END_TIME = datetime.datetime(year=2016, month=12, day=31, hour=23)
+MAX_LATITUDE = 42.0436
+MIN_LATITUDE = 41.6236
+GRID_LENGTH = 0.07
+MAX_LONGITUDE = -87.5117
+MIN_LONGITUDE = -87.9317
+GRID_NUMBER = 6
+
+MAPPING_LIST = [
+    "Arts & Entertainment",
+    "College & University",
+    "Event",
+    'Food',
+    'Nightlife Spot',
+    'Outdoors & Recreation',
+    'Professional & Other Places',
+    'Residence',
+    'Shop & Service',
+    'Travel & Transport'
+]
+
+# MAPPING_DICT = {
+#     "Arts & Entertainment" : 1,
+#     "College & University" : 2,
+#     "Event":3,
+#     'Food':4,
+#     'Nightlife Spot':5,
+#     'Outdoors & Recreation': 6,
+#     'Professional & Other Places':7,
+#     'Residence':8,
+#     'Shop & Service':9,
+#     'Travel & Transport':10
+# }
 
 def main():
-    create_training_data()
-    # pprint.pprint(x_data_set)
+    x_data_set, y_data_set = create_training_data()
     
+    # Splitting the dataset into the Training set and Test set
+    result = train_test_split(x_data_set, y_data_set, test_size=0.25, random_state=0)
+    x_train, x_test, y_train, y_test = result
+
+    # Feature Scaling
+    sc = StandardScaler()
+    x_train = sc.fit_transform(x_train)
+    x_test = sc.transform(x_test)
+
+    # Fitting SVM to the Training set
+    classifier = SVC(kernel='linear', random_state=0)
+    classifier.fit(x_train, y_train)
+
+    # Predicting the Test set results
+    y_pred = classifier.predict(x_test)
+
+    # Making the Confusion Matrix
+    cm = confusion_matrix(y_test, y_pred)
+    print('confusion matrix', cm)
+    total =  cm.item(0) + cm.item(1) + cm.item(2) + cm.item(3)
+    accuracy = (cm.item(0) + cm.item(3)) / total
+    precision = cm.item(3) / (cm.item(3)+cm.item(1))
+    recall = cm.item(3) / (cm.item(2)+cm.item(3))
+    print('Accuracy =', accuracy)
+    print('Precision =', precision)
+    print('Recall =',recall)
 
 
 def create_training_data():
     #  Importing dataset
+    # Read crime data
     crime_csv = pandas.read_csv(CRIME_FILE)
     crime_data_set = crime_csv.iloc[ : , :].values
 
+    # Read location data
     location_category_csv = pandas.read_csv(LOCATION_CATEGORY_FILE)
     location_category_data_set = location_category_csv.iloc[ : , : ].values
 
+    # Read weather data
     weather_csv = pandas.read_csv(WEATHER_FILE)
     weather_data_set = weather_csv.iloc[ : , : ].values
 
+    # # Read question data
+    question_csv = pandas.read_csv(QUESTION_FILE)
+    question_data_set = question_csv.iloc[ : , : ].values
+
+    # # Read category type data
     category_type_dict = None
     with open(CATEGORY_TYPE_FILE, 'r',encoding = "utf-8") as f:
         category_type_dict = json.load(f)['response']['categories']
 
+    # create location grid
+    location_grid = create_location_grid(location_category_data_set, category_type_dict)
+    # pprint.pprint(location_grid)
+    # os.system('pause')
     # create input data set
-    data_size = crime_data_set.shape[0]
     x_data_set = None
-
     
     # create positive data
-    for index, crime_data in enumerate(crime_data_set):
-
-        data_time_str = crime_data[0] #'06/02/2016 07:28:00 PM'
-        data_time = datetime.datetime.strptime(data_time_str, '%m/%d/%Y %I:%M:%S %p')
-        
-        # Month
-        month = int(data_time.strftime('%m'))
-
-        # Day
-        day = int(data_time.strftime('%d'))
-        
-        # Hour
-        hour = int(data_time.strftime('%H'))
-        
-        # Week
-        week = data_time.weekday() + 1
-        
-        # Latitude
-        latitude = crime_data[2]
-
-        # Longitude
-        longitude = crime_data[3]
-
-        # Location Category
-        location_category_list = find_location_category(
-            latitude,
-            longitude,
-            location_category_data_set,
-            category_type_dict
-        )
-
-        weather_array = find_weather(data_time, weather_data_set)
-        # array is [humidity,pressure,temperature,weather_description,wind_direction,wind_speed]
-        
-        # Humidity
-        humidity = weather_array[0]
-
-        # Pressure
-        pressure = weather_array[1]
-
-        # Temperature
-        temperature = weather_array[2]
-
-        # Weather Description
-        weather_description = weather_array[3]
-
-        # Wind Direction
-        wind_direction = weather_array[4]
-
-        # Wind Speed
-        wind_speed = weather_array[5]
-
-        print('location_category_list')
-        print(location_category_list)
-        print('humidity,pressure,temperature,weather_description,wind_direction,wind_speed')
-        print( humidity,pressure,temperature,weather_description,wind_direction,wind_speed)
-        # create new array
-        new_array = numpy.zeros((1, FEATURE_SIZE))
-
-        # put features to new array
-        new_array[0,0] = month
-        new_array[0,1] = day
-        new_array[0,2] = hour
-        new_array[0,3] = week
-        new_array[0,4] = latitude
-        new_array[0,5] = longitude
+    for crime_data in crime_data_set:
+        new_array = create_x_data_set_format(crime_data, location_grid, weather_data_set)
         if x_data_set is None:
             x_data_set = new_array
         else:
             x_data_set = numpy.concatenate((x_data_set, new_array))
-        
+
     # create nagetive data
-    # pprint.pprint(location_category_dict)
-    # old_x_data_set = numpy.copy(x_data_set)
-    # for x_data in old_x_data_set:
-    #     location = str(x_data[4]) + '&' + str(x_data[5])
-    #     print(location)
-    #     print(location_category_dict.get(location))
-        
+    data_size = crime_data_set.shape[0]
+    location_list = create_location_list(crime_data_set, question_data_set)
+    for _ in range(data_size):
+        random_location, random_time = create_fake_data(location_list, crime_data_set)
+        random_time_str = datetime.datetime.strftime(random_time,'%m/%d/%Y %I:%M:%S %p')
+        crime_data = [random_time_str, None, random_location[0], random_location[1]]
+        new_array = create_x_data_set_format(crime_data, location_grid, weather_data_set)
+        if x_data_set is None:
+            x_data_set = new_array
+        else:
+            x_data_set = numpy.concatenate((x_data_set, new_array))
 
-    # Splitting the dataset into the Training set and Test set
-    # result = train_test_split(x, y, test_size=0.25, random_state=0)
-    # x_train, x_test, y_train, y_test = result
+    y_data_set = create_y_data(data_size)
+    return x_data_set, y_data_set
+    # pprint.pprint(x_data_set)
 
-def find_location_category(latitude, longitude, location_category_data_set, category_type_dict):
+def create_y_data(data_size):
+    
+    a = numpy.ones(data_size)
+    b= numpy.zeros(data_size)
+    y_data_set = numpy.concatenate((a, b), axis=None)
+    return y_data_set
+
+def create_x_data_set_format(crime_data, location_grid, weather_data_set,):
+    
+    data_time_str = crime_data[0] #'06/02/2016 07:28:00 PM'
+    data_time = datetime.datetime.strptime(data_time_str, '%m/%d/%Y %I:%M:%S %p')
+    
+    # Month
+    month = int(data_time.strftime('%m'))
+
+    # Day
+    day = int(data_time.strftime('%d'))
+    
+    # Hour
+    hour = int(data_time.strftime('%H'))
+    
+    # Week
+    week = data_time.weekday() + 1
+    
+    # Latitude
+    latitude = crime_data[2]
+
+    # Longitude
+    longitude = crime_data[3]
+    b = datetime.datetime.now()
+    # Location Category
+    location_category_list = find_location_category(latitude, longitude, location_grid)
+    c = datetime.datetime.now()
+    print(location_category_list)
+    location_category_encoding_list = []
+    for category_name in MAPPING_LIST:
+        if category_name in location_category_list:
+            location_category_encoding_list.append(1)
+        else:
+            location_category_encoding_list.append(0)
+    
+    weather_array = find_weather(data_time, weather_data_set)
+    # array is [humidity,pressure,temperature,weather_description,wind_direction,wind_speed]
+    
+    # Humidity
+    humidity = weather_array[0]
+
+    # Pressure
+    pressure = weather_array[1]
+
+    # Temperature
+    temperature = weather_array[2]
+
+    # Weather Description
+    weather_description = weather_array[3]
+
+    # Wind Direction
+    wind_direction = weather_array[4]
+
+    # Wind Speed
+    wind_speed = weather_array[5]
+
+    
+    
+    # create new array
+    new_array = numpy.zeros((1, FEATURE_SIZE))
+
+    # put features to new array
+    new_array[0,0] = month
+    new_array[0,1] = day
+    new_array[0,2] = hour
+    new_array[0,3] = week
+    new_array[0,4] = latitude
+    new_array[0,5] = longitude
+    
+    for index, location_category in enumerate(location_category_encoding_list):
+        new_array[0,6+index] = location_category
+
+
+    new_array[0,16] = humidity
+    new_array[0,17] = pressure
+    new_array[0,18] = temperature
+    new_array[0,19] = wind_direction
+    new_array[0,20] = wind_speed
+    
+    print('all',c-b)
+    print('='*20)
+    # pprint.pprint(new_array)
+    return new_array
+
+def compute_location_grid_index(latitude, longitude):
+    latitude_index = int((latitude - MIN_LATITUDE)/GRID_LENGTH)
+    longitude_index = int((longitude - MIN_LONGITUDE)/GRID_LENGTH)
+    
+    return latitude_index, longitude_index
+
+
+
+def create_location_grid(location_category_data_set, category_type_dict):
+    location_grid = list()
+    for _ in range(GRID_NUMBER):
+        row_array = list()
+        for __ in range(GRID_NUMBER):
+            row_array.append(list())
+        location_grid.append(row_array)
+    
+    for location_data in location_category_data_set:
+        latitude = location_data[0]
+        longitude = location_data[1]
+        latitude_index, longitude_index = compute_location_grid_index(latitude, longitude)
+        category_type = get_location_category_type(location_data[2], category_type_dict)
+        location_data[2] = category_type
+        location_grid[latitude_index][longitude_index].append(location_data)
+    
+    
+    return location_grid
+
+def find_location_category(latitude, longitude, location_grid):
     result_array = []
+    latitude_index, longitude_index = compute_location_grid_index(latitude, longitude)
     start_location = (latitude, longitude)
-    for location_category_data in location_category_data_set:
-        end_latitude =  location_category_data[0]
-        end_longitude =  location_category_data[1]
-        end_location = (end_latitude, end_longitude)
-        miles = distance.distance(end_location, start_location).miles
+    a = datetime.datetime.now()
+    for i in range(-1,2):
+        for j in range(-1,2):
+            result_array.extend(find_location_in_grid(start_location, latitude_index+i, longitude_index+j, location_grid))
+    b = datetime.datetime.now()
+    print('b-a',b-a)
+    return list(set(result_array))
 
-        if miles < RADIUS:
-            category_type = get_location_category_type(location_category_data[2], category_type_dict)
-            result_array.append(category_type)
+def find_location_in_grid(start_location, latitude_index, longitude_index, location_grid):
+    result_array = []
+    if 0 < latitude_index < GRID_NUMBER:
+        if 0 < longitude_index < GRID_NUMBER:
+            specific_location_grid = location_grid[latitude_index][longitude_index]
+            print(len(specific_location_grid))
+            for location_category_data in specific_location_grid:
+                end_latitude =  location_category_data[0]
+                end_longitude =  location_category_data[1]
+                end_location = (end_latitude, end_longitude)
+                miles = distance.distance(end_location, start_location).miles
+                
+                if miles < RADIUS:
+                    result_array.append(location_category_data[2])
     return result_array
+
 
 def find_weather(data_time, weather_data_set):
     new_date_time = data_time.replace(minute=0)
@@ -154,104 +300,51 @@ def find_weather(data_time, weather_data_set):
         if weather_time == new_date_time:
             return weather_data[1:]
 
-def category_check(location,category_type_dict):
-    result = None
-    name_dic = {"Mall":"Shop & Service",
-                "Subway":"Food",
-                "Athletic & Sport":"Outdoors & Recreation",
-                "Hiking Trail":"Outdoors & Recreation",
-                "Car Dealership":"Shop & Service",
-                "Light Rail":"Travel & Transport",
-                "Frozen Yogurt":"Food",
-                "Stable":"Outdoors & Recreation",
-    }
-    if location in name_dic.keys():
-        result = name_dic[location]
-       
-    for high_category in category_type_dict:
-        if location == high_category["name"]:
-            result = high_category["name"]
-        if high_category["categories"] != []:
-            for mid_category in high_category["categories"]:
-                if location == mid_category["name"]:
-                    result = high_category["name"]
-                if mid_category["categories"] != []:
-                    for low_category in mid_category["categories"]:
-                        if location == low_category["name"]:
-                            result = high_category["name"]
-                        if low_category["categories"] != []:
-                            for last_category in low_category["categories"]:
-                                if location == last_category["name"]:
-                                    result = high_category["name"]
-                                if last_category["categories"] != []:
-                                    for end_category in last_category["categories"]:
-                                        if location == end_category["name"]:
-                                            result = high_category["name"]
-    return result
 
-def get_location_category_type(location, category_type_dict):
-    result = category_check(location,category_type_dict)
+
+
+
+
+
+def create_location_list(crime_data_set, question_data_set):
     location_list = []
-    result_list = []
-    if result is None:
-        if "/" in location:
-            location_list = location.split("/")
-            for single_location in location_list:
-                single_location = single_location.strip()
-                new_result = category_check(single_location,category_type_dict)
-                result_list.append(new_result)
-        else:
-            result = "Food"
+    for crime_data in crime_data_set:
+        location = (crime_data[2], crime_data[3])
+        location_list.append(location)
+            
+    for question_data in question_data_set:
+        location = (question_data[0], question_data[1])
+        location_list.append(location)
+    return list(set(location_list))
 
-        if result_list:
-            result = result_list[0]
-            if result is None:
-                result = result_list[1]
-                
+def create_fake_data(location_list, crime_data_set):
+    equal = True
+    
+    
+    while equal:
+        random_location = random.choice(location_list)
+        random_time = random_date_time()
+        equal = False
+        for crime_data in crime_data_set:
+            data_time_str = crime_data[0] #'06/02/2016 07:28:00 PM'
+            data_time = datetime.datetime.strptime(data_time_str, '%m/%d/%Y %I:%M:%S %p')
+            crime_location = (crime_data[2], crime_data[3])
+            if random_location == crime_location:
+                if data_time.date() == random_time.date():
+                    delta = abs(data_time - random_time)
+                    if delta < datetime.timedelta(hours=6):
+                        equal = True
+    return random_location, random_time
 
-    return result
-
-
-
-# def create_location_category_dict():
-#     location_category_dict = {}
-#     location_category_csv = pandas.read_csv(LOCATION_CATEGORY_FILE)
-#     location_category_data_set = location_category_csv.iloc[ : , : ].values
-#     for location_category_data in location_category_data_set:
-#         key = str(location_category_data[0]) + '&' +str(location_category_data[1])
-#         location_category_dict[key] = location_category_data[2]
-
-#     return location_category_dict
-
-# def create_weather_dict():
-#     weather_dict = {}
-#     weather_csv = pandas.read_csv(WEATHER_FILE)
-#     weather_data_set = weather_csv.iloc[ : , : ].values
-#     for weather_data in weather_data_set:
-#         data_time_str = weather_data[0]
-#         data_time = datetime.datetime.strptime(data_time_str, '%Y-%m-%d %H:%M:%S')
-#         data_dict = {
-#             'humidity' : weather_data[1],
-#             'pressure' : weather_data[2],
-#             'temperature' : weather_data[3],
-#             'weather_description' : weather_data[4],
-#             'wind_direction' : weather_data[5],
-#             'wind_speed' : weather_data[6]
-#         }
-#         weather_dict[data_time] = data_dict
-#     return weather_dict
+def random_date_time():
+    random_number = random.random() #[0,1)
+    random_time = START_TIME + (END_TIME - START_TIME)*random_number
+    return random_time.replace(second=0, microsecond=0)
 
 
-# def test():
-#     weather_csv = pandas.read_csv(WEATHER_FILE)
-#     weather_data_set = weather_csv.iloc[ : , : ].values
-#     a = numpy.where(weather_data_set = 41.903932)
-#     print(a)
+
+
 
 if __name__ == '__main__':
-    # weather_dict = create_weather_dict()
-
-    # location_category_dict = create_location_category_dict()
-
-    # pprint.pprint(weather_dict)
     main()
+    # create_y_data(20)
