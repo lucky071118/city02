@@ -14,16 +14,19 @@ from sklearn.neighbors import KDTree
 from location_category import get_location_category_type
 
 DIR_PATH = 'data'
-CRIME_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), DIR_PATH, 'Crimes2015.csv')
+CRIME_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), DIR_PATH, 'Crimes2016.csv')
 LOCATION_CATEGORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), DIR_PATH, 'locCategory.csv')
 WEATHER_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), DIR_PATH, 'Weather.csv')
 QUESTION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), DIR_PATH, 'questionNode_2017.csv')
 CATEGORY_TYPE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), DIR_PATH, 'category.json')
 
 FEATURE_SIZE = 21
-RADIUS = 0.1
+# RADIUS = 0.1
+RADIUS = 0.002
+
 START_TIME = datetime.datetime(year=2016, month=1, day=1, hour=1)
 END_TIME = datetime.datetime(year=2016, month=12, day=31, hour=23)
+MISSING_WEATHER_DATA_TIME = datetime.datetime(year=2016, month=1, day=1, hour=0)
 MAX_LATITUDE = 42.0436
 MIN_LATITUDE = 41.6236
 GRID_LENGTH = 0.07
@@ -59,7 +62,7 @@ MAPPING_LIST = [
 
 def main():
     x_data_set, y_data_set = create_training_data()
-    
+    # pprint.pprint(x_data_set)
     # Splitting the dataset into the Training set and Test set
     result = train_test_split(x_data_set, y_data_set, test_size=0.25, random_state=0)
     x_train, x_test, y_train, y_test = result
@@ -97,7 +100,10 @@ def create_training_data():
     # Read location data
     location_category_csv = pandas.read_csv(LOCATION_CATEGORY_FILE)
     location_category_data_set = location_category_csv.iloc[ : , : ].values
-
+    
+    location_category_csv = pandas.read_csv(LOCATION_CATEGORY_FILE)
+    location_data_set = location_category_csv.iloc[ : , [0,1] ].values
+    
     # Read weather data
     weather_csv = pandas.read_csv(WEATHER_FILE)
     weather_data_set = weather_csv.iloc[ : , : ].values
@@ -111,16 +117,22 @@ def create_training_data():
     with open(CATEGORY_TYPE_FILE, 'r',encoding = "utf-8") as f:
         category_type_dict = json.load(f)['response']['categories']
 
-    # create location grid
-    location_grid = create_location_grid(location_category_data_set, category_type_dict)
-    # pprint.pprint(location_grid)
-    # os.system('pause')
+    # analysis location category
+    analysis_location_category(location_category_data_set, category_type_dict)
+    
+
+    # create KDTree
+    kd_tree = KDTree(location_data_set, leaf_size=60, metric='euclidean')
+
     # create input data set
     x_data_set = None
-    
+
+    a =0
     # create positive data
     for crime_data in crime_data_set:
-        new_array = create_x_data_set_format(crime_data, location_grid, weather_data_set)
+        a+=1
+        print(a)
+        new_array = create_x_data_set_format(crime_data, kd_tree, location_category_data_set, weather_data_set)
         if x_data_set is None:
             x_data_set = new_array
         else:
@@ -130,10 +142,12 @@ def create_training_data():
     data_size = crime_data_set.shape[0]
     location_list = create_location_list(crime_data_set, question_data_set)
     for _ in range(data_size):
+        a+=1
+        print(a)
         random_location, random_time = create_fake_data(location_list, crime_data_set)
         random_time_str = datetime.datetime.strftime(random_time,'%m/%d/%Y %I:%M:%S %p')
         crime_data = [random_time_str, None, random_location[0], random_location[1]]
-        new_array = create_x_data_set_format(crime_data, location_grid, weather_data_set)
+        new_array = create_x_data_set_format(crime_data, kd_tree, location_category_data_set, weather_data_set)
         if x_data_set is None:
             x_data_set = new_array
         else:
@@ -150,11 +164,11 @@ def create_y_data(data_size):
     y_data_set = numpy.concatenate((a, b), axis=None)
     return y_data_set
 
-def create_x_data_set_format(crime_data, location_grid, weather_data_set,):
+def create_x_data_set_format(crime_data, kd_tree, location_category_data_set, weather_data_set,):
     
     data_time_str = crime_data[0] #'06/02/2016 07:28:00 PM'
     data_time = datetime.datetime.strptime(data_time_str, '%m/%d/%Y %I:%M:%S %p')
-    
+    data_time = data_time.replace(second=0)
     # Month
     month = int(data_time.strftime('%m'))
 
@@ -172,11 +186,13 @@ def create_x_data_set_format(crime_data, location_grid, weather_data_set,):
 
     # Longitude
     longitude = crime_data[3]
-    b = datetime.datetime.now()
+    
+
+    
+    
+    
     # Location Category
-    location_category_list = find_location_category(latitude, longitude, location_grid)
-    c = datetime.datetime.now()
-    print(location_category_list)
+    location_category_list = find_nearest_neighbors(latitude, longitude, kd_tree, location_category_data_set)
     location_category_encoding_list = []
     for category_name in MAPPING_LIST:
         if category_name in location_category_list:
@@ -227,69 +243,29 @@ def create_x_data_set_format(crime_data, location_grid, weather_data_set,):
     new_array[0,18] = temperature
     new_array[0,19] = wind_direction
     new_array[0,20] = wind_speed
-    
-    print('all',c-b)
-    print('='*20)
     # pprint.pprint(new_array)
     return new_array
 
-def compute_location_grid_index(latitude, longitude):
-    latitude_index = int((latitude - MIN_LATITUDE)/GRID_LENGTH)
-    longitude_index = int((longitude - MIN_LONGITUDE)/GRID_LENGTH)
-    
-    return latitude_index, longitude_index
+def find_nearest_neighbors(latitude, longitude, kd_tree, location_category_data_set):
+    location_category_list = []
+    distance_list, index_list = kd_tree.query(numpy.array([[latitude,longitude]]), k=5)
+    for i, array_index in enumerate(index_list[0]):
+        if distance_list[0][i] < RADIUS:
+            location_category_list.append(location_category_data_set[array_index][2])
+    # pprint.pprint(list(set(location_category_list)))
+    return list(set(location_category_list))
 
-
-
-def create_location_grid(location_category_data_set, category_type_dict):
-    location_grid = list()
-    for _ in range(GRID_NUMBER):
-        row_array = list()
-        for __ in range(GRID_NUMBER):
-            row_array.append(list())
-        location_grid.append(row_array)
-    
+def analysis_location_category(location_category_data_set, category_type_dict):
     for location_data in location_category_data_set:
-        latitude = location_data[0]
-        longitude = location_data[1]
-        latitude_index, longitude_index = compute_location_grid_index(latitude, longitude)
-        category_type = get_location_category_type(location_data[2], category_type_dict)
-        location_data[2] = category_type
-        location_grid[latitude_index][longitude_index].append(location_data)
-    
-    
-    return location_grid
-
-def find_location_category(latitude, longitude, location_grid):
-    result_array = []
-    latitude_index, longitude_index = compute_location_grid_index(latitude, longitude)
-    start_location = (latitude, longitude)
-    a = datetime.datetime.now()
-    for i in range(-1,2):
-        for j in range(-1,2):
-            result_array.extend(find_location_in_grid(start_location, latitude_index+i, longitude_index+j, location_grid))
-    b = datetime.datetime.now()
-    print('b-a',b-a)
-    return list(set(result_array))
-
-def find_location_in_grid(start_location, latitude_index, longitude_index, location_grid):
-    result_array = []
-    if 0 < latitude_index < GRID_NUMBER:
-        if 0 < longitude_index < GRID_NUMBER:
-            specific_location_grid = location_grid[latitude_index][longitude_index]
-            print(len(specific_location_grid))
-            for location_category_data in specific_location_grid:
-                end_latitude =  location_category_data[0]
-                end_longitude =  location_category_data[1]
-                end_location = (end_latitude, end_longitude)
-                miles = distance.distance(end_location, start_location).miles
-                
-                if miles < RADIUS:
-                    result_array.append(location_category_data[2])
-    return result_array
+        category = get_location_category_type(location_data[2], category_type_dict)
+        location_data[2] = category
 
 
 def find_weather(data_time, weather_data_set):
+
+    if MISSING_WEATHER_DATA_TIME <= data_time <  START_TIME:
+        data_time = START_TIME
+
     new_date_time = data_time.replace(minute=0)
     if data_time.minute > 30:
         new_date_time +=  datetime.timedelta(hours=1)
