@@ -27,6 +27,7 @@ RADIUS = 0.002
 START_TIME = datetime.datetime(year=2016, month=1, day=1, hour=1)
 END_TIME = datetime.datetime(year=2016, month=12, day=31, hour=23)
 MISSING_WEATHER_DATA_TIME = datetime.datetime(year=2016, month=1, day=1, hour=0)
+START_DATE = datetime.date(year=2016, month=1, day=1)
 MAX_LATITUDE = 42.0436
 MIN_LATITUDE = 41.6236
 GRID_LENGTH = 0.07
@@ -61,6 +62,7 @@ MAPPING_LIST = [
 # }
 
 def main():
+    a = datetime.datetime.now()
     x_data_set, y_data_set = create_training_data()
     # pprint.pprint(x_data_set)
     # Splitting the dataset into the Training set and Test set
@@ -89,7 +91,8 @@ def main():
     print('Accuracy =', accuracy)
     print('Precision =', precision)
     print('Recall =',recall)
-
+    b = datetime.datetime.now()
+    print('Time is',b-a)
 
 def create_training_data():
     #  Importing dataset
@@ -131,7 +134,8 @@ def create_training_data():
     # create positive data
     for crime_data in crime_data_set:
         a+=1
-        print(a)
+        if a%1000 ==0:
+            print(a)
         new_array = create_x_data_set_format(crime_data, kd_tree, location_category_data_set, weather_data_set)
         if x_data_set is None:
             x_data_set = new_array
@@ -141,10 +145,12 @@ def create_training_data():
     # create nagetive data
     data_size = crime_data_set.shape[0]
     location_list = create_location_list(crime_data_set, question_data_set)
+    crime_dict = create_crime_dict(crime_data_set)
     for _ in range(data_size):
         a+=1
-        print(a)
-        random_location, random_time = create_fake_data(location_list, crime_data_set)
+        if a%1000 ==0:
+            print(a)
+        random_location, random_time = create_fake_data(location_list, crime_dict)
         random_time_str = datetime.datetime.strftime(random_time,'%m/%d/%Y %I:%M:%S %p')
         crime_data = [random_time_str, None, random_location[0], random_location[1]]
         new_array = create_x_data_set_format(crime_data, kd_tree, location_category_data_set, weather_data_set)
@@ -266,19 +272,33 @@ def find_weather(data_time, weather_data_set):
     if MISSING_WEATHER_DATA_TIME <= data_time <  START_TIME:
         data_time = START_TIME
 
-    new_date_time = data_time.replace(minute=0)
+    new_date_time = data_time.replace(minute=0, second=0, microsecond=0)
     if data_time.minute > 30:
         new_date_time +=  datetime.timedelta(hours=1)
     # data_time datetime.datetime.strptime(data_time, '%Y-%m-%d %H:%M:%S')
-    for weather_data in weather_data_set:
-        weather_time_str = weather_data[0] #2016-01-01 01:00:00
-        weather_time = datetime.datetime.strptime(weather_time_str, '%Y-%m-%d %H:%M:%S')
-        if weather_time == new_date_time:
-            return weather_data[1:]
+    index = compute_weather_index(new_date_time)
+    return weather_data_set[index,1:]
+
+def compute_weather_index(new_date_time):
+    index = 0
+    time_delta = new_date_time - START_TIME
+    index += (time_delta.days*24)
+    index += (time_delta.seconds/3600)
+    
+    return int(index)
 
 
 
 
+
+
+def create_crime_dict(crime_data_set):
+    crime_dict = {}
+    for crime_data in crime_data_set:
+        location = (crime_data[2],crime_data[3])
+        crime_dict.setdefault(location, []).append(crime_data[0])
+    
+    return crime_dict
 
 
 
@@ -293,7 +313,7 @@ def create_location_list(crime_data_set, question_data_set):
         location_list.append(location)
     return list(set(location_list))
 
-def create_fake_data(location_list, crime_data_set):
+def create_fake_data(location_list, crime_dict):
     equal = True
     
     
@@ -301,11 +321,11 @@ def create_fake_data(location_list, crime_data_set):
         random_location = random.choice(location_list)
         random_time = random_date_time()
         equal = False
-        for crime_data in crime_data_set:
-            data_time_str = crime_data[0] #'06/02/2016 07:28:00 PM'
-            data_time = datetime.datetime.strptime(data_time_str, '%m/%d/%Y %I:%M:%S %p')
-            crime_location = (crime_data[2], crime_data[3])
-            if random_location == crime_location:
+        data_time_str_list = crime_dict.get(random_location,[])
+        if data_time_str_list:
+            for data_time_str in data_time_str_list:
+                #'06/02/2016 07:28:00 PM'
+                data_time = datetime.datetime.strptime(data_time_str, '%m/%d/%Y %I:%M:%S %p')
                 if data_time.date() == random_time.date():
                     delta = abs(data_time - random_time)
                     if delta < datetime.timedelta(hours=6):
@@ -322,5 +342,8 @@ def random_date_time():
 
 
 if __name__ == '__main__':
+    # test = datetime.datetime(year=2016, month=1, day=2, hour=1)
+    # index = compute_weather_index(test)
+    # print(index)
     main()
     # create_y_data(20)
