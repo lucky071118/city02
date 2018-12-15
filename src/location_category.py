@@ -1,3 +1,54 @@
+import re
+import pprint
+import configparser
+MAPPING_LIST = list()
+
+def no_location_feature(feature_config):
+    result = []
+    for feature_name in feature_config:
+        if 'location' in feature_name:
+            result.append(not feature_config.getboolean(feature_name))
+    return all(result)
+
+def get_location_feature_size(feature_config):
+    category_list = [
+        "Arts & Entertainment",
+        "College & University",
+        "Event",
+        'Food',
+        'Nightlife Spot',
+        'Outdoors & Recreation',
+        'Professional & Other Places',
+        'Residence',
+        'Shop & Service',
+        'Travel & Transport'
+    ]
+
+    for category in category_list:
+        result_list = re.split(' & | ',category)
+        result_list.insert(0,'category')
+        result_list.insert(0,'location')
+        result_str = '_'.join(result_list).lower()
+        if feature_config.getboolean(result_str):
+            print(result_str)
+            MAPPING_LIST.append(category)
+    return len(MAPPING_LIST)
+
+
+def encode_location_category_list(location_category_list):
+    location_category_encoding_list = []
+    
+    for category_name in MAPPING_LIST:
+        if category_name in location_category_list:
+            location_category_encoding_list.append(1)
+        else:
+            location_category_encoding_list.append(0)
+    return location_category_encoding_list
+
+
+
+
+
 def category_check(location,category_type_dict):
     result = None
     name_dic = {"Mall":"Shop & Service",
@@ -54,3 +105,17 @@ def get_location_category_type(location, category_type_dict):
                 
 
     return result
+
+if __name__ == '__main__':
+    config = configparser.ConfigParser()
+    config.read('setting.config')
+    
+    feature_config = config['FEATURE']
+    initial_mapping_list(feature_config)
+    test = [
+        'Food',
+        'Nightlife Spot',
+        'Travel & Transport',
+        'Professional & Other Places',
+    ]
+    result = encode_location_category_list(test)

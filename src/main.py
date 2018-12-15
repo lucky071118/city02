@@ -5,13 +5,24 @@ import random
 import numpy
 import pandas
 import pprint
+import configparser
 from geopy import distance
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.svm import SVC
 from sklearn.metrics import confusion_matrix
 from sklearn.neighbors import KDTree
+from sklearn.preprocessing import Imputer
 from location_category import get_location_category_type
+from location_category import get_location_feature_size
+from location_category import encode_location_category_list
+from location_category import no_location_feature
+from weather_description_category import get_weather_description_category
+from weather_description_category import encode_weather_category_list
+from weather_description_category import get_weather_feature_size
+
+
+
 
 DIR_PATH = 'data'
 CRIME_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), DIR_PATH, 'Crimes2016.csv')
@@ -20,9 +31,11 @@ WEATHER_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), DIR_PATH
 QUESTION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), DIR_PATH, 'questionNode_2017.csv')
 CATEGORY_TYPE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), DIR_PATH, 'category.json')
 
-FEATURE_SIZE = 21
-# RADIUS = 0.1
-RADIUS = 0.002
+
+
+
+
+
 
 START_TIME = datetime.datetime(year=2016, month=1, day=1, hour=1)
 END_TIME = datetime.datetime(year=2016, month=12, day=31, hour=23)
@@ -35,36 +48,23 @@ MAX_LONGITUDE = -87.5117
 MIN_LONGITUDE = -87.9317
 GRID_NUMBER = 6
 
-MAPPING_LIST = [
-    "Arts & Entertainment",
-    "College & University",
-    "Event",
-    'Food',
-    'Nightlife Spot',
-    'Outdoors & Recreation',
-    'Professional & Other Places',
-    'Residence',
-    'Shop & Service',
-    'Travel & Transport'
-]
 
-# MAPPING_DICT = {
-#     "Arts & Entertainment" : 1,
-#     "College & University" : 2,
-#     "Event":3,
-#     'Food':4,
-#     'Nightlife Spot':5,
-#     'Outdoors & Recreation': 6,
-#     'Professional & Other Places':7,
-#     'Residence':8,
-#     'Shop & Service':9,
-#     'Travel & Transport':10
-# }
+
+config = configparser.ConfigParser()
+config.read('setting.config')
+feature_config = config['FEATURE']
+KNN_NUMBER = int(config['OTHER']['k_nearest_neighbor'])
+TRAIN_DATA_SIZE_SUBSET = int(config['OTHER']['train_data_size_subset'])
+RADIUS = float(config['OTHER']['radius'])
+
+
 
 def main():
-    a = datetime.datetime.now()
-    x_data_set, y_data_set = create_training_data()
-    # pprint.pprint(x_data_set)
+    feature_size = check_feature()
+    
+    time_a = datetime.datetime.now()
+    x_data_set, y_data_set = create_training_data(feature_size)
+
     # Splitting the dataset into the Training set and Test set
     result = train_test_split(x_data_set, y_data_set, test_size=0.25, random_state=0)
     x_train, x_test, y_train, y_test = result
@@ -73,7 +73,7 @@ def main():
     sc = StandardScaler()
     x_train = sc.fit_transform(x_train)
     x_test = sc.transform(x_test)
-
+    time_b = datetime.datetime.now()
     # Fitting SVM to the Training set
     classifier = SVC(kernel='linear', random_state=0)
     classifier.fit(x_train, y_train)
@@ -84,21 +84,47 @@ def main():
     # Making the Confusion Matrix
     cm = confusion_matrix(y_test, y_pred)
     print('confusion matrix', cm)
-    total =  cm.item(0) + cm.item(1) + cm.item(2) + cm.item(3)
-    accuracy = (cm.item(0) + cm.item(3)) / total
-    precision = cm.item(3) / (cm.item(3)+cm.item(1))
-    recall = cm.item(3) / (cm.item(2)+cm.item(3))
+    (true_negative, false_positive, false_negative, true_positive) = numpy.ravel(cm)
+    total = true_negative + false_positive + false_negative + true_positive
+    accuracy = (true_negative + true_positive)/total
+    precision = true_positive / (false_positive + true_positive)
+    recall = true_positive / (false_negative + true_positive)
+    f_score = 2 * precision * recall / ( precision + recall )
+    
     print('Accuracy =', accuracy)
     print('Precision =', precision)
     print('Recall =',recall)
-    b = datetime.datetime.now()
-    print('Time is',b-a)
+    print('f_score =',f_score)
+    time_c = datetime.datetime.now()
+    print('Preprocessing Time is',time_b-time_a)
+    print('Training Time is',time_c-time_b)
+    print('Total Time is',time_c-time_a)
 
-def create_training_data():
+
+def check_feature():
+    print('='*10 + 'Feature' + '='*10)
+    feature_size = 0
+    feature_location_size = get_location_feature_size(feature_config)
+    feature_size += feature_location_size
+    for feature in feature_config:
+        if 'location' not in feature:
+            if 'weather_description' == feature:
+                if feature_config.getboolean(feature):
+                    print(feature)
+                    feature_size += get_weather_feature_size()
+            else:
+                if feature_config.getboolean(feature):
+                    print(feature)
+                    feature_size += 1
+    print('Total Feature Size :', feature_size)
+    return feature_size
+
+def create_training_data(feature_size):
     #  Importing dataset
     # Read crime data
+    crime_data_index = range(0,266584,TRAIN_DATA_SIZE_SUBSET)
     crime_csv = pandas.read_csv(CRIME_FILE)
-    crime_data_set = crime_csv.iloc[ : , :].values
+    crime_data_set = crime_csv.iloc[ crime_data_index , :].values
 
     # Read location data
     location_category_csv = pandas.read_csv(LOCATION_CATEGORY_FILE)
@@ -111,15 +137,23 @@ def create_training_data():
     weather_csv = pandas.read_csv(WEATHER_FILE)
     weather_data_set = weather_csv.iloc[ : , : ].values
 
-    # # Read question data
+    # Read question data
     question_csv = pandas.read_csv(QUESTION_FILE)
     question_data_set = question_csv.iloc[ : , : ].values
 
-    # # Read category type data
+    #  Read category type data
     category_type_dict = None
     with open(CATEGORY_TYPE_FILE, 'r',encoding = "utf-8") as f:
         category_type_dict = json.load(f)['response']['categories']
 
+
+    # Handling the missing data
+     
+    imputer = Imputer(missing_values = "NaN", strategy = "mean", axis = 0)
+    imputer = imputer.fit(weather_data_set[ : , [1,2,3]])
+    weather_data_set[ : , [1,2,3]] = imputer.transform(weather_data_set[ : , [1,2,3]])
+    
+    
     # analysis location category
     analysis_location_category(location_category_data_set, category_type_dict)
     
@@ -135,8 +169,9 @@ def create_training_data():
     for crime_data in crime_data_set:
         a+=1
         if a%1000 ==0:
-            print(a)
-        new_array = create_x_data_set_format(crime_data, kd_tree, location_category_data_set, weather_data_set)
+            print('='*10 + str(a) + '='*10)
+        new_array = create_x_data_set_format(crime_data, kd_tree, location_category_data_set, weather_data_set, feature_size)
+        
         if x_data_set is None:
             x_data_set = new_array
         else:
@@ -149,11 +184,12 @@ def create_training_data():
     for _ in range(data_size):
         a+=1
         if a%1000 ==0:
-            print(a)
+            print('='*10 + str(a) + '='*10)
         random_location, random_time = create_fake_data(location_list, crime_dict)
         random_time_str = datetime.datetime.strftime(random_time,'%m/%d/%Y %I:%M:%S %p')
-        crime_data = [random_time_str, None, random_location[0], random_location[1]]
-        new_array = create_x_data_set_format(crime_data, kd_tree, location_category_data_set, weather_data_set)
+        crime_data = [random_time_str, "123", random_location[0], random_location[1]]
+        new_array = create_x_data_set_format(crime_data, kd_tree, location_category_data_set, weather_data_set, feature_size)
+        
         if x_data_set is None:
             x_data_set = new_array
         else:
@@ -161,7 +197,7 @@ def create_training_data():
 
     y_data_set = create_y_data(data_size)
     return x_data_set, y_data_set
-    # pprint.pprint(x_data_set)
+    
 
 def create_y_data(data_size):
     
@@ -170,7 +206,7 @@ def create_y_data(data_size):
     y_data_set = numpy.concatenate((a, b), axis=None)
     return y_data_set
 
-def create_x_data_set_format(crime_data, kd_tree, location_category_data_set, weather_data_set,):
+def create_x_data_set_format(crime_data, kd_tree, location_category_data_set, weather_data_set, feature_size):
     
     data_time_str = crime_data[0] #'06/02/2016 07:28:00 PM'
     data_time = datetime.datetime.strptime(data_time_str, '%m/%d/%Y %I:%M:%S %p')
@@ -188,10 +224,11 @@ def create_x_data_set_format(crime_data, kd_tree, location_category_data_set, we
     week = data_time.weekday() + 1
     
     # Latitude
-    latitude = crime_data[2]
+    latitude = round(crime_data[2],8)
+    
 
     # Longitude
-    longitude = crime_data[3]
+    longitude = round(crime_data[3],8)
     
 
     
@@ -199,66 +236,66 @@ def create_x_data_set_format(crime_data, kd_tree, location_category_data_set, we
     
     # Location Category
     location_category_list = find_nearest_neighbors(latitude, longitude, kd_tree, location_category_data_set)
-    location_category_encoding_list = []
-    for category_name in MAPPING_LIST:
-        if category_name in location_category_list:
-            location_category_encoding_list.append(1)
-        else:
-            location_category_encoding_list.append(0)
+    location_category_encoding_list = encode_location_category_list(location_category_list)
     
     weather_array = find_weather(data_time, weather_data_set)
     # array is [humidity,pressure,temperature,weather_description,wind_direction,wind_speed]
     
     # Humidity
-    humidity = weather_array[0]
+    humidity = round(weather_array[0],1)
 
     # Pressure
-    pressure = weather_array[1]
+    pressure = round(weather_array[1],1)
 
     # Temperature
-    temperature = weather_array[2]
+    temperature = round(weather_array[2],2)
 
     # Weather Description
     weather_description = weather_array[3]
+    weather_category_list = get_weather_description_category(weather_description)
+    weather_category_encoding_list = encode_weather_category_list(weather_category_list)
 
     # Wind Direction
-    wind_direction = weather_array[4]
+    wind_direction = round(weather_array[4],1)
 
     # Wind Speed
-    wind_speed = weather_array[5]
+    wind_speed = round(weather_array[5],1)
 
-    
     
     # create new array
-    new_array = numpy.zeros((1, FEATURE_SIZE))
+    new_array = numpy.zeros((1, feature_size))
 
     # put features to new array
-    new_array[0,0] = month
-    new_array[0,1] = day
-    new_array[0,2] = hour
-    new_array[0,3] = week
-    new_array[0,4] = latitude
-    new_array[0,5] = longitude
     
-    for index, location_category in enumerate(location_category_encoding_list):
-        new_array[0,6+index] = location_category
+    array_index = 0
+    for feature_name in feature_config:
+        if 'location' in feature_name:
+            continue
+        if feature_name == 'weather_description':
+            continue
+        if feature_config.getboolean(feature_name):
+            new_array[0,array_index] = locals()[feature_name]
+            array_index += 1
 
+   
+    if not no_location_feature(feature_config):
+        for location_category in location_category_encoding_list:
+            new_array[0,array_index] = location_category
+            array_index += 1
 
-    new_array[0,16] = humidity
-    new_array[0,17] = pressure
-    new_array[0,18] = temperature
-    new_array[0,19] = wind_direction
-    new_array[0,20] = wind_speed
-    # pprint.pprint(new_array)
+    if feature_config.getboolean('weather_description'):
+        for weather_category in weather_category_encoding_list:
+            new_array[0,array_index] = weather_category
+            array_index += 1
+    
     return new_array
 
 def find_nearest_neighbors(latitude, longitude, kd_tree, location_category_data_set):
     location_category_list = []
-    distance_list, index_list = kd_tree.query(numpy.array([[latitude,longitude]]), k=5)
+    distance_list, index_list = kd_tree.query(numpy.array([[latitude,longitude]]), k=KNN_NUMBER)
     for i, array_index in enumerate(index_list[0]):
         if distance_list[0][i] < RADIUS:
             location_category_list.append(location_category_data_set[array_index][2])
-    # pprint.pprint(list(set(location_category_list)))
     return list(set(location_category_list))
 
 def analysis_location_category(location_category_data_set, category_type_dict):
@@ -305,11 +342,11 @@ def create_crime_dict(crime_data_set):
 def create_location_list(crime_data_set, question_data_set):
     location_list = []
     for crime_data in crime_data_set:
-        location = (crime_data[2], crime_data[3])
+        location = (round(crime_data[2],8), round(crime_data[3],8))
         location_list.append(location)
             
     for question_data in question_data_set:
-        location = (question_data[0], question_data[1])
+        location = (round(question_data[0],8), round(question_data[1],8))
         location_list.append(location)
     return list(set(location_list))
 
