@@ -6,3 +6,4 @@ OTHER代表要參數
 train_data_size_subset代表Input Data的Subset，10代表只拿1/10的資料；5代表只拿1/5的資料
 k_nearest_neighbor代表離犯罪地點的最近的K個地點
 radius = 0.002代表以犯罪地點為圓心，半徑內的地點才列入考量
+multiple_location_type代表是否將location category用multiple表示，yes代表[2,0,3...]，no代表[1,0,1...]

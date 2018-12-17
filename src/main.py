@@ -16,7 +16,9 @@ from sklearn.neighbors import KDTree
 from sklearn.preprocessing import Imputer
 from location_category import get_location_category_type
 from location_category import get_location_feature_size
-from location_category import encode_location_category_list
+from location_category import encode_single_location_category_list
+from location_category import encode_multiple_location_category_list
+
 from location_category import no_location_feature
 from weather_description_category import get_weather_description_category
 from weather_description_category import encode_weather_category_list
@@ -57,6 +59,7 @@ feature_config = config['FEATURE']
 KNN_NUMBER = int(config['OTHER']['k_nearest_neighbor'])
 TRAIN_DATA_SIZE_SUBSET = int(config['OTHER']['train_data_size_subset'])
 RADIUS = float(config['OTHER']['radius'])
+MULTIPLE_LOCATION_TYPE = config['OTHER'].getboolean('multiple_location_type')
 
 
 
@@ -252,7 +255,10 @@ def create_x_data_set_format(crime_data, kd_tree, location_category_data_set, we
     
     # Location Category
     location_category_list = find_nearest_neighbors(latitude, longitude, kd_tree, location_category_data_set)
-    location_category_encoding_list = encode_location_category_list(location_category_list)
+    if MULTIPLE_LOCATION_TYPE:
+        location_category_encoding_list = encode_multiple_location_category_list(location_category_list)
+    else:
+        location_category_encoding_list = encode_single_location_category_list(location_category_list)
     
     weather_array = find_weather(data_time, weather_data_set)
     # array is [humidity,pressure,temperature,weather_description,wind_direction,wind_speed]
@@ -312,7 +318,7 @@ def find_nearest_neighbors(latitude, longitude, kd_tree, location_category_data_
     for i, array_index in enumerate(index_list[0]):
         if distance_list[0][i] < RADIUS:
             location_category_list.append(location_category_data_set[array_index][2])
-    return list(set(location_category_list))
+    return location_category_list
 
 def analysis_location_category(location_category_data_set, category_type_dict):
     for location_data in location_category_data_set:

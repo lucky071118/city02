@@ -1,6 +1,8 @@
 import re
+import collections
 import pprint
 import configparser
+
 MAPPING_LIST = list()
 
 def no_location_feature(feature_config):
@@ -35,7 +37,7 @@ def get_location_feature_size(feature_config):
     return len(MAPPING_LIST)
 
 
-def encode_location_category_list(location_category_list):
+def encode_single_location_category_list(location_category_list):
     location_category_encoding_list = []
     
     for category_name in MAPPING_LIST:
@@ -43,6 +45,15 @@ def encode_location_category_list(location_category_list):
             location_category_encoding_list.append(1)
         else:
             location_category_encoding_list.append(0)
+    return location_category_encoding_list
+
+def encode_multiple_location_category_list(location_category_list):
+    location_category_encoding_list = []
+    location_category_counter = collections.Counter(location_category_list)
+    
+    for category_name in MAPPING_LIST:
+        count_number = location_category_counter[category_name]
+        location_category_encoding_list.append(count_number)
     return location_category_encoding_list
 
 
@@ -111,11 +122,22 @@ if __name__ == '__main__':
     config.read('setting.config')
     
     feature_config = config['FEATURE']
-    initial_mapping_list(feature_config)
+    size = get_location_feature_size(feature_config)
+    print('size',size)
     test = [
         'Food',
         'Nightlife Spot',
         'Travel & Transport',
         'Professional & Other Places',
+        'Professional & Other Places',
+        'Nightlife Spot',
+        'Food',
+        'Food',
+        "Arts & Entertainment",
+        "College & University",
+        "College & University",
     ]
-    result = encode_location_category_list(test)
+    result = encode_multiple_location_category_list(test)
+    print(result)
+    result = encode_single_location_category_list(test)
+    print(result)
