@@ -1,4 +1,5 @@
 import os
+import random
 import datetime
 import json
 import random
@@ -122,9 +123,19 @@ def check_feature():
 def create_training_data(feature_size):
     #  Importing dataset
     # Read crime data
-    crime_data_index = range(0,266584,TRAIN_DATA_SIZE_SUBSET)
+    # crime_data_index_list = range(0,266584,TRAIN_DATA_SIZE_SUBSET)
+    crime_data_index_list = []
+    data_size = int(266584/TRAIN_DATA_SIZE_SUBSET)
+    for index in range(0, data_size):
+        start = index*TRAIN_DATA_SIZE_SUBSET
+        end = (index+1)*TRAIN_DATA_SIZE_SUBSET
+        choice_number = random.choice(range(start,end))
+        crime_data_index_list.append(choice_number)
+
+    
+
     crime_csv = pandas.read_csv(CRIME_FILE)
-    crime_data_set = crime_csv.iloc[ crime_data_index , :].values
+    crime_data_set = crime_csv.iloc[ crime_data_index_list , :].values
 
 
     # Read all crime data
