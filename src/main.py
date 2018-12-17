@@ -126,6 +126,11 @@ def create_training_data(feature_size):
     crime_csv = pandas.read_csv(CRIME_FILE)
     crime_data_set = crime_csv.iloc[ crime_data_index , :].values
 
+
+    # Read all crime data
+    crime_csv = pandas.read_csv(CRIME_FILE)
+    all_crime_data_set = crime_csv.iloc[ : , :].values
+
     # Read location data
     location_category_csv = pandas.read_csv(LOCATION_CATEGORY_FILE)
     location_category_data_set = location_category_csv.iloc[ : , : ].values
@@ -146,7 +151,7 @@ def create_training_data(feature_size):
     with open(CATEGORY_TYPE_FILE, 'r',encoding = "utf-8") as f:
         category_type_dict = json.load(f)['response']['categories']
 
-
+    
     # Handling the missing data
      
     imputer = Imputer(missing_values = "NaN", strategy = "mean", axis = 0)
@@ -179,8 +184,8 @@ def create_training_data(feature_size):
 
     # create nagetive data
     data_size = crime_data_set.shape[0]
-    location_list = create_location_list(crime_data_set, question_data_set)
-    crime_dict = create_crime_dict(crime_data_set)
+    location_list = create_location_list(all_crime_data_set, question_data_set)
+    crime_dict = create_crime_dict(all_crime_data_set)
     for _ in range(data_size):
         a+=1
         if a%1000 ==0:
