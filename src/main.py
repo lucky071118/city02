@@ -3,22 +3,30 @@ import random
 import datetime
 import json
 import random
-import numpy
-import pandas
 import pprint
 import configparser
+import csv
+
+import numpy
+import pandas
 from geopy import distance
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.svm import SVC
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import confusion_matrix
 from sklearn.neighbors import KDTree
 from sklearn.preprocessing import Imputer
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.tree import export_graphviz
+from sklearn.externals import joblib
+from sklearn.neural_network import MLPClassifier
+
 from location_category import get_location_category_type
 from location_category import get_location_feature_size
 from location_category import encode_single_location_category_list
 from location_category import encode_multiple_location_category_list
-
 from location_category import no_location_feature
 from weather_description_category import get_weather_description_category
 from weather_description_category import encode_weather_category_list
@@ -44,6 +52,8 @@ START_TIME = datetime.datetime(year=2016, month=1, day=1, hour=1)
 END_TIME = datetime.datetime(year=2016, month=12, day=31, hour=23)
 MISSING_WEATHER_DATA_TIME = datetime.datetime(year=2016, month=1, day=1, hour=0)
 START_DATE = datetime.date(year=2016, month=1, day=1)
+INVAILD_TIME = datetime.datetime(year=2017, month=12, day=1)
+VAILD_TIME = datetime.datetime(year=2017, month=11, day=29)
 MAX_LATITUDE = 42.0436
 MIN_LATITUDE = 41.6236
 GRID_LENGTH = 0.07
@@ -60,15 +70,15 @@ KNN_NUMBER = int(config['OTHER']['k_nearest_neighbor'])
 TRAIN_DATA_SIZE_SUBSET = int(config['OTHER']['train_data_size_subset'])
 RADIUS = float(config['OTHER']['radius'])
 MULTIPLE_LOCATION_TYPE = config['OTHER'].getboolean('multiple_location_type')
-
+GET_RESULT = config['OTHER'].getboolean('get_result')
 
 
 def main():
     feature_size = check_feature()
-    
+    print('='*10, 'Preprocessing', '='*10)
     time_a = datetime.datetime.now()
-    x_data_set, y_data_set = create_training_data(feature_size)
-
+    x_data_set, y_data_set, predict_data_set_list = create_data(feature_size)
+    
     # Splitting the dataset into the Training set and Test set
     result = train_test_split(x_data_set, y_data_set, test_size=0.25, random_state=0)
     x_train, x_test, y_train, y_test = result
@@ -77,10 +87,29 @@ def main():
     sc = StandardScaler()
     x_train = sc.fit_transform(x_train)
     x_test = sc.transform(x_test)
+    new_predict_data_set_list = []
+    for predict_data_set in predict_data_set_list:
+        new_predict_data_set = sc.transform(predict_data_set)
+        new_predict_data_set_list.append(new_predict_data_set)
+    print('='*10, 'Training', '='*10)
     time_b = datetime.datetime.now()
+
     # Fitting SVM to the Training set
-    classifier = SVC(kernel='linear', random_state=0)
+
+    # classifier = RandomForestClassifier(n_estimators = 10, criterion = 'entropy', random_state = 0)
+    # classifier = SVC()
+    # classifier = SVC()
+    # classifier = LogisticRegression()
+    # classifier = DecisionTreeClassifier(criterion='entropy', random_state=0, max_depth=5)
+    classifier = MLPClassifier(solver='adam', activation='relu',alpha=1e-4,hidden_layer_sizes=(500,500), random_state=1)
+
+    # Train
     classifier.fit(x_train, y_train)
+    # save the model to disk
+    # filename = 'finalized_model.sav'
+    # joblib.dump(classifier, filename)
+    
+    # export_graphviz(classifier, out_file="tree.dot", feature_names=['month', 'hour','week'])
 
     # Predicting the Test set results
     y_pred = classifier.predict(x_test)
@@ -104,6 +133,34 @@ def main():
     print('Training Time is',time_c-time_b)
     print('Total Time is',time_c-time_a)
 
+    if GET_RESULT:
+        compute_result(classifier, new_predict_data_set_list)
+        
+
+def compute_result(classifier, predict_data_set_list):
+    # Read question data
+    question_csv = pandas.read_csv(QUESTION_FILE)
+    question_data_set = question_csv.iloc[ : , : ].values
+    
+    
+    for index, predict_data_set in enumerate(predict_data_set_list):
+        result_set = classifier.predict(predict_data_set)
+        result_answer = 0
+        if any(result_set):
+            result_answer = 1
+        question_data_set[index,4] = result_answer
+    write_result_file(question_data_set)     
+            
+def write_result_file(question_data_set):
+    
+    with open('result.csv', 'w', newline='') as csv_file:
+        writer = csv.writer(csv_file)
+
+        # Field
+        writer.writerow(['Latitude','Longitude','Date','Time slot','prediction'])
+        
+        # value
+        writer.writerows(question_data_set)
 
 def check_feature():
     print('='*10 + 'Feature' + '='*10)
@@ -123,7 +180,7 @@ def check_feature():
     print('Total Feature Size :', feature_size)
     return feature_size
 
-def create_training_data(feature_size):
+def create_data(feature_size):
     #  Importing dataset
     # Read crime data
     # crime_data_index_list = range(0,266584,TRAIN_DATA_SIZE_SUBSET)
@@ -180,7 +237,7 @@ def create_training_data(feature_size):
     # create KDTree
     kd_tree = KDTree(location_data_set, leaf_size=60, metric='euclidean')
 
-    # create input data set
+    # create x data set
     x_data_set = None
 
     a =0
@@ -214,9 +271,29 @@ def create_training_data(feature_size):
         else:
             x_data_set = numpy.concatenate((x_data_set, new_array))
 
+    # create y data set
     y_data_set = create_y_data(data_size)
-    return x_data_set, y_data_set
+    print('='*10, 'predict_data', '='*10)
+    # create predict data set
+    predict_data_set_list = []
+    if GET_RESULT:
+        changed_crime_data_set = change_question_to_crime(question_data_set)
+        for crime_data_list in changed_crime_data_set:
+            predict_data_set = None
+            for crime_data in crime_data_list:
+                new_array = create_x_data_set_format(crime_data, kd_tree, location_category_data_set, weather_data_set, feature_size)
+        
+                if predict_data_set is None:
+                    predict_data_set = new_array
+                else:
+                    predict_data_set = numpy.concatenate((predict_data_set, new_array))
+
+            predict_data_set_list.append(predict_data_set)
+        print('predict_data_set_list',len(predict_data_set_list))
+
+    return x_data_set, y_data_set, predict_data_set_list
     
+
 
 def create_y_data(data_size):
     
@@ -397,6 +474,36 @@ def random_date_time():
     return random_time.replace(second=0, microsecond=0)
 
 
+def change_question_to_crime(question_data_set):
+    changed_crime_data_set = []
+    time_slot_dict = {
+        'midnight':0,
+        'morning':6,
+        'afternoon':12,
+        'night':18
+    }
+    for question_data in question_data_set:
+        data_time_str = question_data[2]
+        data_date = datetime.datetime.strptime(data_time_str, '%Y/%m/%d')
+
+        if data_date > INVAILD_TIME:
+            data_date = VAILD_TIME
+
+        latitude = question_data[0]
+        longitude = question_data[1]
+        time_slot = question_data[3]
+        start_hour = time_slot_dict[time_slot]
+        crime_data_list =[]
+        for index in range(6):
+            data_hour = start_hour+index
+            data_time = data_date + datetime.timedelta(hours=data_hour)
+            data_time_str = datetime.datetime.strftime(data_time,'%m/%d/%Y %I:%M:%S %p')
+            crime_data = [data_time_str, "123", latitude, longitude]
+            crime_data_list.append(crime_data)
+                
+        changed_crime_data_set.append(crime_data_list)
+    return changed_crime_data_set
+        
 
 
 
